@@ -21,9 +21,6 @@ class CVTableDetector:
     
     # Output Padding
     BBOX_PADDING = 5          # Pixels to expand the final bounding box by
-    
-    # Density Filtering
-    DENSITY_THRESHOLD = 2     # Minimum local density out of 255 (2 = ~0.8% text coverage). Lower = more sensitive.
 
     def __init__(self):
         pass
@@ -47,6 +44,13 @@ class CVTableDetector:
         if total_white_pixels == 0:
             return None
             
+        # --- GENERATE DENSITY MAP OUTPUT ---
+        # A large blur visualizes the relative text density of different regions
+        density_map = cv2.blur(thresh, (50, 20))
+        density_color = cv2.applyColorMap(density_map, cv2.COLORMAP_JET)
+        cv2.imwrite("density_map.png", density_color)
+        print(">>> Saved density_map.png visualization")
+            
         page_h = pix.h
         results = []
         
@@ -60,16 +64,10 @@ class CVTableDetector:
         print("\n--- Starting Auto-Tuning CV Loop ---")
         
         for kw, kh in kernel_steps:
-            # DENSITY FILTERING
-            # 1. Blur the image to average the white pixels in every (kw, kh) window.
-            # This creates a grayscale heatmap of local text density.
-            blurred = cv2.blur(thresh, (kw, kh))
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh))
+            dilated = cv2.dilate(thresh, kernel, iterations=1)
             
-            # 2. Threshold the density map to only keep areas with sufficient text density.
-            # This ignores isolated sparse text (like loose sidebars) while merging dense tables.
-            _, density_mask = cv2.threshold(blurred, self.DENSITY_THRESHOLD, 255, cv2.THRESH_BINARY)
-            
-            contours, _ = cv2.findContours(density_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if not contours:
                 continue
                 
@@ -97,7 +95,7 @@ class CVTableDetector:
                 'coverage': coverage,
                 'bbox': bbox_str,
                 'cv_rect': (x, y, w, h),
-                'dilated': density_mask
+                'dilated': dilated
             })
             
             print(f"Kernel {kw}x{kh} -> Text Coverage: {coverage:.1%}")

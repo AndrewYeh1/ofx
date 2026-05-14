@@ -1,4 +1,3 @@
-import pytesseract
 import pandas as pd
 from PIL import Image
 import fitz  # PyMuPDF
@@ -16,7 +15,7 @@ from .ofx_export_dialog import OfxExportDialog
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Interactive OCR Table Extractor")
+        self.setWindowTitle("Extractor")
         self.resize(1000, 600)
 
         # Main Widget
@@ -54,7 +53,7 @@ class MainWindow(QMainWindow):
 
         self.btn_extract = QPushButton("Extract Data")
         self.btn_extract.setObjectName("greenBtn")
-        self.btn_extract.clicked.connect(self.extract_data)
+        # self.btn_extract.clicked.connect()
         self.toolbar.addWidget(self.btn_extract)
 
         self.btn_export = QPushButton("Export CSV")
@@ -85,24 +84,6 @@ class MainWindow(QMainWindow):
         self.current_image_path = None
         self.current_image_pil = None
         self.df = None
-        
-        # Check Tesseract
-        import os
-        if os.name == 'nt':
-            tesseract_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-            alt_tesseract_path = r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'
-            if os.path.exists(tesseract_path):
-                pytesseract.pytesseract.tesseract_cmd = tesseract_path
-            elif os.path.exists(alt_tesseract_path):
-                pytesseract.pytesseract.tesseract_cmd = alt_tesseract_path
-
-        try:
-            pytesseract.get_tesseract_version()
-        except pytesseract.TesseractNotFoundError:
-            QMessageBox.warning(self, "Tesseract Not Found", 
-                                "Tesseract-OCR is not installed or not in your PATH.\n"
-                                "Please install it from https://github.com/UB-Mannheim/tesseract/wiki "
-                                "for OCR features to work on Windows.")
 
     def fit_to_view(self):
         self.canvas.fit_to_view()
@@ -135,67 +116,6 @@ class MainWindow(QMainWindow):
         
         # Fit to screen automatically
         self.canvas.fit_to_view()
-
-    def extract_data(self):
-        if not self.current_image_pil or not self.canvas.grid_overlay:
-            QMessageBox.warning(self, "Error", "Load a document first.")
-            return
-
-        grid = self.canvas.grid_overlay
-        rows = grid.rows
-        cols = grid.cols
-        
-        # Get absolute coordinates of the grid relative to the image
-        scene_pos = grid.scenePos()
-        rect = grid.rect
-        
-        # Image bounds
-        img_w, img_h = self.current_image_pil.size
-        
-        # Clamp to image boundaries
-        x_start = max(0, int(scene_pos.x()))
-        y_start = max(0, int(scene_pos.y()))
-        x_end = min(img_w, int(scene_pos.x() + rect.width()))
-        y_end = min(img_h, int(scene_pos.y() + rect.height()))
-        
-        # Real width and height
-        grid_w = x_end - x_start
-        grid_h = y_end - y_start
-
-        if grid_w <= 0 or grid_h <= 0:
-            QMessageBox.warning(self, "Error", "Grid is entirely outside the image.")
-            return
-
-        col_boundaries = [0.0] + grid.col_fractions + [1.0]
-        row_boundaries = [0.0] + grid.row_fractions + [1.0]
-
-        data = []
-        for r in range(rows):
-            row_data = []
-            for c in range(cols):
-                cx1 = x_start + col_boundaries[c] * grid_w
-                cy1 = y_start + row_boundaries[r] * grid_h
-                cx2 = x_start + col_boundaries[c+1] * grid_w
-                cy2 = y_start + row_boundaries[r+1] * grid_h
-                
-                # Check for zero sized cell to prevent crash
-                if (cx2 - cx1) < 2 or (cy2 - cy1) < 2:
-                    row_data.append("")
-                    continue
-                    
-                cell_img = self.current_image_pil.crop((cx1, cy1, cx2, cy2))
-                text = pytesseract.image_to_string(cell_img, config='--psm 6').strip()
-                # Normalize newlines and extra spaces into a single space
-                text = " ".join(text.split())
-                row_data.append(text)
-            data.append(row_data)
-
-        if data:
-            self.df = pd.DataFrame(data)
-            model = PandasModel(self.df)
-            self.table_view.setModel(model)
-        else:
-            QMessageBox.warning(self, "Error", "No data extracted.")
         
     def export_csv(self):
         if self.df is None:
