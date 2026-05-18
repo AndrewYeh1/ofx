@@ -300,3 +300,58 @@ QSlider {
     padding: 6px;
 }
 /* QSlider */
+
+/* QSpinBox */
+QSpinBox {
+    background-color: #1e1e1e;
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px;
+    font-size: 10pt;
+    font-family: "Roboto";
+    min-width: 40px;
+}
+
+QSpinBox:focus {
+    border: 1px solid #aaa;
+}
+
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: #3e3e3e;
+    border: none;
+    width: 16px;
+}
+
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background-color: #555;
+}
+
+QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+    background-color: #48655a;
+}
+
+QSpinBox::up-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid #eee;
+    width: 0;
+    height: 0;
+}
+
+QSpinBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #eee;
+    width: 0;
+    height: 0;
+}
+
+QSpinBox:disabled {
+    background-color: #2e2e2e;
+    color: #777;
+    border: 1px solid #444;
+}
+/* QSpinBox */

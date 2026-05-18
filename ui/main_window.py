@@ -4,13 +4,16 @@ import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QFileDialog, 
                              QGraphicsScene, QMessageBox, QTableView, QSplitter, QGraphicsView,
-                             QSpinBox, QLabel)
+                             QSpinBox, QLabel, QAbstractSpinBox)
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtCore import Qt
 
-from .canvas import InteractiveCanvas, GridOverlay
+from .canvas import InteractiveCanvas
 from .models import PandasModel
 from .ofx_export_dialog import OfxExportDialog
+
+from core.camelot import DataDetectionWorker
+from core.paddleocr import TableDetectionWorker
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -33,27 +36,11 @@ class MainWindow(QMainWindow):
         self.btn_fit.clicked.connect(self.fit_to_view)
         self.toolbar.addWidget(self.btn_fit)
 
-        self.toolbar.addSpacing(20)
-
-        self.toolbar.addWidget(QLabel("Rows:"))
-        self.spin_rows = QSpinBox()
-        self.spin_rows.setRange(1, 100)
-        self.spin_rows.setValue(5)
-        self.spin_rows.valueChanged.connect(self.update_grid)
-        self.toolbar.addWidget(self.spin_rows)
-
-        self.toolbar.addWidget(QLabel("Cols:"))
-        self.spin_cols = QSpinBox()
-        self.spin_cols.setRange(1, 50)
-        self.spin_cols.setValue(4)
-        self.spin_cols.valueChanged.connect(self.update_grid)
-        self.toolbar.addWidget(self.spin_cols)
-
         self.toolbar.addStretch()
 
         self.btn_extract = QPushButton("Extract Data")
         self.btn_extract.setObjectName("greenBtn")
-        # self.btn_extract.clicked.connect()
+        self.btn_extract.clicked.connect(self.extract_data)
         self.toolbar.addWidget(self.btn_extract)
 
         self.btn_export = QPushButton("Export CSV")
@@ -70,10 +57,33 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.layout.addWidget(self.splitter)
 
+        # Canvas Container
+        self.canvas_container = QWidget()
+        self.canvas_container_layout = QVBoxLayout(self.canvas_container)
+        self.splitter.addWidget(self.canvas_container)
+
         # Canvas
         self.scene = QGraphicsScene()
         self.canvas = InteractiveCanvas(self.scene)
-        self.splitter.addWidget(self.canvas)
+        self.canvas_container_layout.addWidget(self.canvas)
+        self.canvas_container_layout.setContentsMargins(0, 0, 10, 0)
+
+        # Page Controls
+        self.scroll_right_button = QPushButton(">")
+        self.scroll_right_button.clicked.connect(self.scroll_right)
+        self.page_num = QSpinBox()
+        self.page_num.setRange(0, 0)
+        self.page_num.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.page_num.valueChanged.connect(self.scroll_to_page)
+        self.scroll_left_button = QPushButton("<")
+        self.scroll_left_button.clicked.connect(self.scroll_left)
+        self.left_right_layout = QHBoxLayout()
+        self.left_right_layout.addStretch()
+        self.left_right_layout.addWidget(self.scroll_left_button)
+        self.left_right_layout.addWidget(self.page_num)
+        self.left_right_layout.addWidget(self.scroll_right_button)
+        self.left_right_layout.addStretch()
+        self.canvas_container_layout.addLayout(self.left_right_layout)
 
         # Data Table
         self.table_view = QTableView()
@@ -85,12 +95,22 @@ class MainWindow(QMainWindow):
         self.current_image_pil = None
         self.df = None
 
+        # Data Processing
+        self.table_detection_worker = TableDetectionWorker()
+        self.data_detection_worker = DataDetectionWorker()
+
+    def scroll_right(self):
+        self.page_num.setValue(self.page_num.value() + 1)
+    
+    def scroll_left(self):
+        self.page_num.setValue(self.page_num.value() - 1)
+    
+    def scroll_to_page(self):
+        # implement page change
+        pass
+
     def fit_to_view(self):
         self.canvas.fit_to_view()
-
-    def update_grid(self):
-        if self.canvas.grid_overlay:
-            self.canvas.grid_overlay.set_grid(self.spin_rows.value(), self.spin_cols.value())
 
     def load_document(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Document", "", "Images/PDFs (*.png *.jpg *.jpeg *.bmp *.pdf)")
@@ -107,16 +127,36 @@ class MainWindow(QMainWindow):
             qimg = QImage.fromData(img_data)
             pixmap = QPixmap.fromImage(qimg)
             self.current_image_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            self.page_num.setRange(1, doc.page_count)
+            self.page_num.setValue(1)
         else:
             pixmap = QPixmap(file_name)
             self.current_image_pil = Image.open(file_name).convert("RGB")
-            
+            self.page_num.setRange(1, 1)
+            self.page_num.setValue(1)
+        
         self.canvas.set_image(pixmap)
-        self.update_grid() # Apply current spinbox values
-        
-        # Fit to screen automatically
         self.canvas.fit_to_view()
-        
+        self.detect_tables()
+    
+    def detect_tables(self):
+        self.table_detection_worker.import_pixmap(self.canvas.pixmap)
+        self.table_detection_worker.start()
+        self.table_detection_worker.result_ready.connect(self.canvas.draw_bounding_boxes)
+    
+    def extract_data(self):
+        self.data_detection_worker.import_path(self.current_image_path)
+        self.data_detection_worker.set_bbox(
+            self.canvas.get_bounding_boxes(),
+            page_height_px=self.canvas.pixmap.height()
+        )
+        self.data_detection_worker.start()
+        self.data_detection_worker.result_ready.connect(self.display_data)
+    
+    def display_data(self):
+        self.df = self.data_detection_worker.df
+        self.table_view.setModel(PandasModel(self.df))
+
     def export_csv(self):
         if self.df is None:
             QMessageBox.warning(self, "Error", "No data to export.")
