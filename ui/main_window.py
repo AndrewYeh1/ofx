@@ -12,6 +12,7 @@ from .canvas import InteractiveCanvas
 from .models import PandasModel
 from .ofx_export_dialog import OfxExportDialog
 
+from utils.data import PageData
 from core.camelot import DataDetectionWorker
 from core.paddleocr import TableDetectionWorker
 
@@ -92,12 +93,26 @@ class MainWindow(QMainWindow):
 
         # State
         self.current_image_path = None
-        self.current_image_pil = None
         self.df = None
 
         # Data Processing
         self.table_detection_worker = TableDetectionWorker()
+        self.table_detection_worker.result_ready.connect(self.worker_completed)
         self.data_detection_worker = DataDetectionWorker()
+        self.pages = []
+        self.processing_page = 0
+    
+    def worker_completed(self, result):
+        if self.processing_page == self.page_num.value() - 1:
+            self.canvas.draw_bounding_boxes(result)
+        
+        self.pages[self.processing_page].bounding_boxes = result
+        self.pages[self.processing_page].processing_status = "Completed"
+    
+        if self.processing_page < self.page_num.maximum() - 1:
+            self.processing_page += 1
+            self.table_detection_worker.import_pixmap(self.pages[self.processing_page].pixmap)
+            self.table_detection_worker.start()
 
     def scroll_right(self):
         self.page_num.setValue(self.page_num.value() + 1)
@@ -106,8 +121,10 @@ class MainWindow(QMainWindow):
         self.page_num.setValue(self.page_num.value() - 1)
     
     def scroll_to_page(self):
-        # implement page change
-        pass
+        target_page = self.page_num.value() - 1
+        self.canvas.clear_bounding_boxes()
+        self.canvas.set_image(self.pages[target_page].pixmap)
+        self.canvas.draw_bounding_boxes(self.pages[target_page].bounding_boxes)
 
     def fit_to_view(self):
         self.canvas.fit_to_view()
@@ -118,31 +135,47 @@ class MainWindow(QMainWindow):
             return
             
         self.current_image_path = file_name
+        self.pages.clear()
+        self.processing_page = 0
+        
+        # Block signals temporarily to prevent automatic/conditional triggering of scroll_to_page
+        self.page_num.blockSignals(True)
         
         if file_name.lower().endswith(".pdf"):
+            # open file
             doc = fitz.open(file_name)
-            page = doc.load_page(0) # Load first page
-            pix = page.get_pixmap(dpi=300) # High DPI for OCR
-            img_data = pix.tobytes("ppm")
-            qimg = QImage.fromData(img_data)
-            pixmap = QPixmap.fromImage(qimg)
-            self.current_image_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            # add all pages to self.pages
+            for page_num in range(doc.page_count):
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap(dpi=300)
+                img_data = pix.tobytes("ppm")
+                qimg = QImage.fromData(img_data)
+                pixmap = QPixmap.fromImage(qimg)
+                self.pages.append(PageData(page_num, [], pixmap, None, "Pending"))
+            # set page range
             self.page_num.setRange(1, doc.page_count)
             self.page_num.setValue(1)
         else:
+            # open file
             pixmap = QPixmap(file_name)
-            self.current_image_pil = Image.open(file_name).convert("RGB")
+            # add page to self.pages
+            self.pages.append(PageData(0, [], pixmap, None, "Pending"))
+            # set page range
             self.page_num.setRange(1, 1)
             self.page_num.setValue(1)
         
-        self.canvas.set_image(pixmap)
+        # Re-enable signals
+        self.page_num.blockSignals(False)
+        
+        # Explicitly call scroll_to_page once to load the first page and display it
+        self.scroll_to_page()
         self.canvas.fit_to_view()
+
         self.detect_tables()
     
     def detect_tables(self):
         self.table_detection_worker.import_pixmap(self.canvas.pixmap)
         self.table_detection_worker.start()
-        self.table_detection_worker.result_ready.connect(self.canvas.draw_bounding_boxes)
     
     def extract_data(self):
         self.data_detection_worker.import_path(self.current_image_path)

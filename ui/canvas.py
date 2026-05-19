@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsObject, QGraphicsSceneMouseEvent
-from PyQt6.QtGui import QPen, QColor, QPainter, QCursor
+from PyQt6.QtGui import QPen, QColor, QPainter, QCursor, QPixmap
 from PyQt6.QtCore import QPointF, QRectF, Qt
 
 from core.paddleocr import TableDetectionWorker
@@ -137,7 +137,7 @@ class InteractiveCanvas(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
 
-    def set_image(self, pixmap):
+    def set_image(self, pixmap: QPixmap):
         self.scene().clear()
         self.bounding_boxes = []
         self.pixmap = pixmap
@@ -166,6 +166,11 @@ class InteractiveCanvas(QGraphicsView):
             y2 = y1 + bb.rect.height()
             result.append([x1, y1, x2, y2])
         return result
+    
+    def clear_bounding_boxes(self):
+        for bb in self.bounding_boxes:
+            self.scene().removeItem(bb)
+        self.bounding_boxes = []
 
     def wheelEvent(self, event):
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
