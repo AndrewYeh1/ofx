@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 
 from .canvas import InteractiveCanvas
 from .models import PandasModel
+from .table_view import DropdownHeaderTableView
 from .ofx_export_dialog import OfxExportDialog
 
 from utils.data import PageData
@@ -41,8 +42,8 @@ class MainWindow(QMainWindow):
 
         self.btn_extract = QPushButton("Extract Data")
         self.btn_extract.setObjectName("greenBtn")
-        self.btn_extract.clicked.connect(self.extract_data)
-        self.toolbar.addWidget(self.btn_extract)
+        # self.btn_extract.clicked.connect(self.extract_data)
+        # self.toolbar.addWidget(self.btn_extract)
 
         self.btn_export = QPushButton("Export CSV")
         self.btn_export.clicked.connect(self.export_csv)
@@ -87,7 +88,7 @@ class MainWindow(QMainWindow):
         self.canvas_container_layout.addLayout(self.left_right_layout)
 
         # Data Table
-        self.table_view = QTableView()
+        self.table_view = DropdownHeaderTableView()
         self.splitter.addWidget(self.table_view)
         self.splitter.setSizes([700, 300])
 
@@ -108,6 +109,11 @@ class MainWindow(QMainWindow):
         
         self.pages[self.processing_page].bounding_boxes = result
         self.pages[self.processing_page].processing_status = "Completed"
+
+        self.extract_data(self.processing_page)
+
+        if self.processing_page == self.page_num.value() - 1:
+            self.display_data(self.processing_page)
     
         if self.processing_page < self.page_num.maximum() - 1:
             self.processing_page += 1
@@ -125,6 +131,8 @@ class MainWindow(QMainWindow):
         self.canvas.clear_bounding_boxes()
         self.canvas.set_image(self.pages[target_page].pixmap)
         self.canvas.draw_bounding_boxes(self.pages[target_page].bounding_boxes)
+        if self.pages[target_page].processing_status == "Completed":
+            self.display_data(target_page)
 
     def fit_to_view(self):
         self.canvas.fit_to_view()
@@ -177,18 +185,21 @@ class MainWindow(QMainWindow):
         self.table_detection_worker.import_pixmap(self.canvas.pixmap)
         self.table_detection_worker.start()
     
-    def extract_data(self):
+    def extract_data(self, page_num: int):
         self.data_detection_worker.import_path(self.current_image_path)
+        self.data_detection_worker.set_page_num(page_num + 1)
         self.data_detection_worker.set_bbox(
-            self.canvas.get_bounding_boxes(),
-            page_height_px=self.canvas.pixmap.height()
+            self.pages[page_num].bounding_boxes,
+            page_height_px=self.pages[page_num].pixmap.height()
         )
         self.data_detection_worker.start()
-        self.data_detection_worker.result_ready.connect(self.display_data)
+        self.data_detection_worker.wait()
+        self.pages[page_num].df = self.data_detection_worker.df
     
-    def display_data(self):
-        self.df = self.data_detection_worker.df
-        self.table_view.setModel(PandasModel(self.df))
+    def display_data(self, page_num: int):
+        if self.pages[page_num].df is None:
+            return
+        self.table_view.setModel(PandasModel(self.pages[page_num].df))
 
     def export_csv(self):
         if self.df is None:

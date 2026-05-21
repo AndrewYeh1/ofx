@@ -167,6 +167,20 @@ class InteractiveCanvas(QGraphicsView):
             result.append([x1, y1, x2, y2])
         return result
     
+    def get_largest_bounding_box(self):
+        result = self.get_bounding_boxes()
+        if not result:
+            return []
+        
+        max_area = 0
+        max_area_box = []
+        for box in result:
+            area = (box[2] - box[0]) * (box[3] - box[1])
+            if area > max_area:
+                max_area = area
+                max_area_box = box
+        return [max_area_box]
+    
     def clear_bounding_boxes(self):
         for bb in self.bounding_boxes:
             self.scene().removeItem(bb)

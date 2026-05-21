@@ -12,9 +12,13 @@ class DataDetectionWorker(QThread):
         self.df = None
         self.path = None
         self.bbox = None
+        self.page_num = 0
     
     def import_path(self, path: str):
         self.path = path
+    
+    def set_page_num(self, page_num: int):
+        self.page_num = page_num
     
     def set_bbox(self, bbox: list, page_height_px: int, render_dpi: int = 300):
         """Convert pixel coords (top-left origin) to Camelot PDF points (bottom-left origin).
@@ -28,7 +32,8 @@ class DataDetectionWorker(QThread):
         page_h_pts = page_height_px * scale  # Page height in PDF points
         
         self.bbox = []
-        for x1, y1, x2, y2 in bbox:
+        for box in bbox:
+            x1, y1, x2, y2 = box['coordinate']
             # Scale to PDF points
             px1 = x1 * scale
             px2 = x2 * scale
@@ -40,7 +45,7 @@ class DataDetectionWorker(QThread):
     def run(self):
         tables = camelot.read_pdf(
             self.path,
-            pages="1",
+            pages=str(self.page_num),
             flavor="stream",
             table_areas=self.bbox
         )
