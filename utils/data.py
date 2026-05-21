@@ -9,3 +9,5 @@ class PageData:
         self.pixmap = pixmap
         self.df = df
         self.processing_status = processing_status
+        self.column_mappings = None
+        self.disabled_rows = None

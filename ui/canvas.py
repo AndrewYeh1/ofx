@@ -1,10 +1,12 @@
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsObject, QGraphicsSceneMouseEvent
 from PyQt6.QtGui import QPen, QColor, QPainter, QCursor, QPixmap
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 
 from core.paddleocr import TableDetectionWorker
 
 class BoundingBox(QGraphicsObject):
+    box_updated = pyqtSignal()
+
     def __init__(self, x, y, width, height):
         super().__init__()
         self.rect = QRectF(0, 0, width, height)
@@ -118,12 +120,16 @@ class BoundingBox(QGraphicsObject):
             self._is_resizing = False
             self._resize_edge = None
             self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+            self.box_updated.emit()
         else:
             self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
             super().mouseReleaseEvent(event)
+            self.box_updated.emit() # Box was likely moved
 
 
 class InteractiveCanvas(QGraphicsView):
+    box_updated = pyqtSignal()
+
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
@@ -152,6 +158,30 @@ class InteractiveCanvas(QGraphicsView):
         for box in boxes:
             x1, y1, x2, y2 = box['coordinate']
             bb = BoundingBox(x1, y1, x2 - x1, y2 - y1)
+            bb.box_updated.connect(self.box_updated.emit)
+            self.bounding_boxes.append(bb)
+            self.scene().addItem(bb)
+
+    def _find_largest_box(self, rects: list):
+        if not rects:
+            return None
+        max_area = 0
+        max_rect = None
+        for rect in rects:
+            area = (rect[2] - rect[0]) * (rect[3] - rect[1])
+            if area > max_area:
+                max_area = area
+                max_rect = rect
+        return max_rect
+
+    def draw_largest_bounding_box(self, boxes: list):
+        rects = [box['coordinate'] for box in boxes]
+        largest = self._find_largest_box(rects)
+        
+        if largest:
+            x1, y1, x2, y2 = largest
+            bb = BoundingBox(x1, y1, x2 - x1, y2 - y1)
+            bb.box_updated.connect(self.box_updated.emit)
             self.bounding_boxes.append(bb)
             self.scene().addItem(bb)
 
@@ -169,17 +199,8 @@ class InteractiveCanvas(QGraphicsView):
     
     def get_largest_bounding_box(self):
         result = self.get_bounding_boxes()
-        if not result:
-            return []
-        
-        max_area = 0
-        max_area_box = []
-        for box in result:
-            area = (box[2] - box[0]) * (box[3] - box[1])
-            if area > max_area:
-                max_area = area
-                max_area_box = box
-        return [max_area_box]
+        largest = self._find_largest_box(result)
+        return [largest] if largest else []
     
     def clear_bounding_boxes(self):
         for bb in self.bounding_boxes:

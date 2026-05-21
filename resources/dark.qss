@@ -230,22 +230,23 @@ QTableCornerButton::section {
 QCheckBox {
     color: #f0f0f0;
     font-size: 14px;
+    background-color: transparent;
 }
 
 QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
 }
 
 QCheckBox::indicator:unchecked {
-    border: 2px solid #555;
-    background-color: #1e1e1e;
+    border: 2px solid #666;
+    background-color: transparent;
     border-radius: 4px;
 }
 
 QCheckBox::indicator:unchecked:hover {
-    border: 2px solid #555;
-    background-color: #555555;
+    border: 2px solid #888;
+    background-color: #3c3c3c;
 }
 
 QCheckBox::indicator:checked {

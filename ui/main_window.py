@@ -38,12 +38,17 @@ class MainWindow(QMainWindow):
         self.btn_fit.clicked.connect(self.fit_to_view)
         self.toolbar.addWidget(self.btn_fit)
 
-        self.toolbar.addStretch()
+        self.btn_add_bbox = QPushButton("Add Bounding Box")
+        self.btn_add_bbox.clicked.connect(self.add_bounding_box)
+        self.btn_add_bbox.setEnabled(False)
+        self.toolbar.addWidget(self.btn_add_bbox)
 
-        self.btn_extract = QPushButton("Extract Data")
-        self.btn_extract.setObjectName("greenBtn")
-        # self.btn_extract.clicked.connect(self.extract_data)
-        # self.toolbar.addWidget(self.btn_extract)
+        self.btn_remove_bbox = QPushButton("Remove Bounding Box")
+        self.btn_remove_bbox.clicked.connect(self.remove_bounding_box)
+        self.btn_remove_bbox.setEnabled(False)
+        self.toolbar.addWidget(self.btn_remove_bbox)
+
+        self.toolbar.addStretch()
 
         self.btn_export = QPushButton("Export CSV")
         self.btn_export.clicked.connect(self.export_csv)
@@ -67,6 +72,7 @@ class MainWindow(QMainWindow):
         # Canvas
         self.scene = QGraphicsScene()
         self.canvas = InteractiveCanvas(self.scene)
+        self.canvas.box_updated.connect(self.on_box_updated)
         self.canvas_container_layout.addWidget(self.canvas)
         self.canvas_container_layout.setContentsMargins(0, 0, 10, 0)
 
@@ -105,9 +111,16 @@ class MainWindow(QMainWindow):
     
     def worker_completed(self, result):
         if self.processing_page == self.page_num.value() - 1:
-            self.canvas.draw_bounding_boxes(result)
+            self.canvas.draw_largest_bounding_box(result)
+            self.update_bbox_buttons()
         
-        self.pages[self.processing_page].bounding_boxes = result
+        # Save only the largest bounding box so returning to the page doesn't draw all of them
+        largest_box = self.canvas._find_largest_box([box['coordinate'] for box in result])
+        if largest_box:
+            self.pages[self.processing_page].bounding_boxes = [{'coordinate': largest_box}]
+        else:
+            self.pages[self.processing_page].bounding_boxes = []
+            
         self.pages[self.processing_page].processing_status = "Completed"
 
         self.extract_data(self.processing_page)
@@ -128,11 +141,60 @@ class MainWindow(QMainWindow):
     
     def scroll_to_page(self):
         target_page = self.page_num.value() - 1
+        
+        # Save state for the current page before switching
+        if hasattr(self, 'current_page_index') and 0 <= self.current_page_index < len(self.pages):
+            self.pages[self.current_page_index].column_mappings = self.table_view.get_mappings().copy()
+            self.pages[self.current_page_index].disabled_rows = self.table_view.get_disabled_rows().copy()
+            
+        self.current_page_index = target_page
+
         self.canvas.clear_bounding_boxes()
         self.canvas.set_image(self.pages[target_page].pixmap)
         self.canvas.draw_bounding_boxes(self.pages[target_page].bounding_boxes)
+        self.update_bbox_buttons()
+        
         if self.pages[target_page].processing_status == "Completed":
             self.display_data(target_page)
+
+    def update_bbox_buttons(self):
+        if not self.pages or self.page_num.value() == 0:
+            self.btn_add_bbox.setEnabled(False)
+            self.btn_remove_bbox.setEnabled(False)
+            return
+            
+        has_boxes = len(self.canvas.bounding_boxes) > 0
+        self.btn_add_bbox.setEnabled(not has_boxes)
+        self.btn_remove_bbox.setEnabled(has_boxes)
+
+    def add_bounding_box(self):
+        if not self.pages or self.page_num.value() == 0:
+            return
+        pixmap = self.pages[self.current_page_index].pixmap
+        w, h = pixmap.width(), pixmap.height()
+        default_box = [{'coordinate': [w * 0.1, h * 0.1, w * 0.9, h * 0.9]}]
+        self.canvas.draw_bounding_boxes(default_box)
+        self.pages[self.current_page_index].bounding_boxes = default_box
+        self.update_bbox_buttons()
+        self.on_box_updated()
+        
+    def remove_bounding_box(self):
+        if not self.pages or self.page_num.value() == 0:
+            return
+        self.canvas.clear_bounding_boxes()
+        self.pages[self.current_page_index].bounding_boxes = []
+        self.update_bbox_buttons()
+        self.on_box_updated()
+
+    def on_box_updated(self):
+        if not self.pages or self.page_num.value() == 0:
+            return
+            
+        boxes = self.canvas.get_bounding_boxes()
+        self.pages[self.current_page_index].bounding_boxes = [{'coordinate': box} for box in boxes]
+        
+        self.extract_data(self.current_page_index)
+        self.display_data(self.current_page_index)
 
     def fit_to_view(self):
         self.canvas.fit_to_view()
@@ -195,11 +257,23 @@ class MainWindow(QMainWindow):
         self.data_detection_worker.start()
         self.data_detection_worker.wait()
         self.pages[page_num].df = self.data_detection_worker.df
+        
+        # Clear out previous manual row disables to force the automatic filter to run
+        self.pages[page_num].disabled_rows = None
     
     def display_data(self, page_num: int):
-        if self.pages[page_num].df is None:
+        page_data = self.pages[page_num]
+        if page_data.df is None:
             return
-        self.table_view.setModel(PandasModel(self.pages[page_num].df))
+            
+        self.table_view.setModel(PandasModel(page_data.df))
+        
+        # Restore saved state if it exists
+        if page_data.column_mappings is not None:
+            self.table_view.set_mappings(page_data.column_mappings)
+            
+        if page_data.disabled_rows is not None:
+            self.table_view.set_disabled_rows(page_data.disabled_rows)
 
     def export_csv(self):
         if self.df is None:
