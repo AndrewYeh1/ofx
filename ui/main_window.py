@@ -4,16 +4,15 @@ import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QFileDialog, 
                              QGraphicsScene, QMessageBox, QTableView, QSplitter, QGraphicsView,
-                             QSpinBox, QLabel, QAbstractSpinBox)
+                             QSpinBox, QLabel, QAbstractSpinBox, QCheckBox)
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtCore import Qt
 
 from .canvas import InteractiveCanvas
 from .models import PandasModel
 from .table_view import DropdownHeaderTableView
-from .ofx_export_dialog import OfxExportDialog
-
 from utils.data import PageData
+from utils.ofx import validate_mappings, determine_mapping_type, prepare_page_data, export_to_ofx
 from core.camelot import DataDetectionWorker
 from core.paddleocr import TableDetectionWorker
 
@@ -57,6 +56,9 @@ class MainWindow(QMainWindow):
         self.btn_export_ofx = QPushButton("Export OFX")
         self.btn_export_ofx.clicked.connect(self.export_ofx)
         self.toolbar.addWidget(self.btn_export_ofx)
+        
+        self.cb_export_all = QCheckBox("Export All Pages")
+        self.toolbar.addWidget(self.cb_export_all)
 
         self.layout.addLayout(self.toolbar)
 
@@ -286,83 +288,80 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", f"Saved to {file_name}")
 
     def export_ofx(self):
-        if self.df is None:
-            QMessageBox.warning(self, "Error", "No data to export.")
+        if not self.pages:
+            QMessageBox.warning(self, "Error", "No documents loaded.")
             return
 
-        dialog = OfxExportDialog(self.df.columns, self)
-        if dialog.exec():
-            mapping = dialog.get_mapping()
-            
-            file_name, _ = QFileDialog.getSaveFileName(self, "Save OFX", "", "OFX Files (*.ofx)")
-            if not file_name:
+        export_all = self.cb_export_all.isChecked()
+        pages_to_export = []
+        
+        if export_all:
+            pages_to_export = [p for p in self.pages if p.df is not None]
+            if not pages_to_export:
+                QMessageBox.warning(self, "Error", "No extracted data available to export.")
+                return
+        else:
+            current_page = self.pages[self.current_page_index]
+            if current_page.df is None:
+                QMessageBox.warning(self, "Error", "Current page has no extracted data.")
+                return
+            pages_to_export = [current_page]
+
+        # Sync the current active table view state to its PageData object
+        if hasattr(self, 'current_page_index') and self.current_page_index < len(self.pages):
+            self.pages[self.current_page_index].column_mappings = self.table_view.get_mappings().copy()
+            self.pages[self.current_page_index].disabled_rows = self.table_view.get_disabled_rows().copy()
+
+        # Validation
+        mapping_type = None
+        for page in pages_to_export:
+            err = validate_mappings(page.column_mappings)
+            if err:
+                page_display_num = page.page_num + 1 if hasattr(page, 'page_num') else 'Unknown'
+                QMessageBox.warning(self, "Mapping Error", f"Page {page_display_num}: {err}")
+                return
+                
+            p_type = determine_mapping_type(page.column_mappings)
+            if mapping_type is None:
+                mapping_type = p_type
+            elif mapping_type != p_type:
+                QMessageBox.warning(self, "Consistency Error", 
+                    "When exporting all pages, mappings must be consistently formatted (either all use 'Amount', or all use 'Deposit'/'Withdrawal').")
                 return
 
-            try:
-                # Basic OFX generation
-                ofx_header = (
-                    "OFXHEADER:100\n"
-                    "DATA:OFXSGML\n"
-                    "VERSION:102\n"
-                    "SECURITY:NONE\n"
-                    "ENCODING:USASCII\n"
-                    "CHARSET:1252\n"
-                    "COMPRESSION:NONE\n"
-                    "OLDFILEUID:NONE\n"
-                    "NEWFILEUID:NONE\n\n"
-                )
+        # Choose File
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save OFX", "", "OFX Files (*.ofx)")
+        if not file_name:
+            return
 
-                ofx_body = (
-                    "<OFX>\n"
-                    "  <BANKMSGSRSV1>\n"
-                    "    <STMTTRNRS>\n"
-                    "      <TRNUID>1</TRNUID>\n"
-                    "      <STATUS><CODE>0</CODE><SEVERITY>INFO</SEVERITY></STATUS>\n"
-                    "      <STMTRS>\n"
-                    "        <CURDEF>USD</CURDEF>\n"
-                    "        <BANKACCTFROM>\n"
-                    "          <BANKID>123456789</BANKID>\n"
-                    "          <ACCTID>123456789</ACCTID>\n"
-                    "          <ACCTTYPE>CHECKING</ACCTTYPE>\n"
-                    "        </BANKACCTFROM>\n"
-                    "        <BANKTRANLIST>\n"
-                )
+        try:
+            # Process Data
+            dataframes = []
+            all_errors = []
+            for page in pages_to_export:
+                page_display_num = page.page_num + 1 if hasattr(page, 'page_num') else 'Unknown'
+                df_clean, errors = prepare_page_data(page.df, page.column_mappings, page.disabled_rows or set(), page_display_num)
+                dataframes.append(df_clean)
+                all_errors.extend(errors)
+                
+            final_df = pd.concat(dataframes, ignore_index=True)
+            if final_df.empty:
+                QMessageBox.warning(self, "Error", "No valid data to export after filtering.")
+                return
 
-                transactions = []
-                for idx, row in self.df.iterrows():
-                    date_val = str(row[mapping['date']]).strip()
-                    amount_val = str(row[mapping['amount']]).strip()
-                    payee_val = str(row[mapping['payee']]).strip()
-
-                    trn_type = "CREDIT" if not amount_val.startswith("-") else "DEBIT"
-
-                    txn = (
-                        "          <STMTTRN>\n"
-                        f"            <TRNTYPE>{trn_type}</TRNTYPE>\n"
-                        f"            <DTPOSTED>{date_val}</DTPOSTED>\n"
-                        f"            <TRNAMT>{amount_val}</TRNAMT>\n"
-                        f"            <FITID>{idx}</FITID>\n"
-                        f"            <NAME>{payee_val}</NAME>\n"
-                        "          </STMTTRN>\n"
-                    )
-                    transactions.append(txn)
-
-                ofx_footer = (
-                    "        </BANKTRANLIST>\n"
-                    "      </STMTRS>\n"
-                    "    </STMTTRNRS>\n"
-                    "  </BANKMSGSRSV1>\n"
-                    "</OFX>\n"
-                )
-
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    f.write(ofx_header)
-                    f.write(ofx_body)
-                    for txn in transactions:
-                        f.write(txn)
-                    f.write(ofx_footer)
-
+            export_to_ofx(final_df, file_name)
+            
+            if all_errors:
+                err_msg = f"Saved to {file_name}\n\nWarning: Some data was ignored due to invalid formatting:\n"
+                for i, err in enumerate(all_errors):
+                    if i >= 10:
+                        err_msg += f"...and {len(all_errors) - 10} more errors."
+                        break
+                    err_msg += f"- Page {err['page']}, Column index {err['col']}, Row {err['row'] + 1}\n"
+                QMessageBox.warning(self, "Export Completed with Warnings", err_msg)
+            else:
                 QMessageBox.information(self, "Success", f"Saved to {file_name}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save OFX: {str(e)}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save OFX: {str(e)}")
 
