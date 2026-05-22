@@ -338,19 +338,22 @@ class MainWindow(QMainWindow):
             self.pages[self.current_page_index].disabled_rows = self.table_view.get_disabled_rows().copy()
 
         # Validation for consistency
-        from utils.ofx import validate_mappings, prepare_page_data
-        try:
-            first_mapping_type = None
-            for i, page in enumerate(pages_to_export):
+        from utils.ofx import validate_mappings, prepare_page_data, determine_mapping_type
+        mapping_type = None
+        for page in pages_to_export:
+            err = validate_mappings(page.column_mappings)
+            if err:
                 page_display_num = page.page_num + 1 if hasattr(page, 'page_num') else 'Unknown'
-                mapping_type = validate_mappings(page.column_mappings, page_display_num)
-                if first_mapping_type is None:
-                    first_mapping_type = mapping_type
-                elif mapping_type != first_mapping_type:
-                    raise ValueError("Inconsistent mappings across pages. All exported pages must either use (Amount) OR (Deposit & Withdrawal).")
-        except ValueError as e:
-            QMessageBox.warning(self, "Validation Error", str(e))
-            return
+                QMessageBox.warning(self, "Mapping Error", f"Page {page_display_num}: {err}")
+                return
+                
+            p_type = determine_mapping_type(page.column_mappings)
+            if mapping_type is None:
+                mapping_type = p_type
+            elif mapping_type != p_type:
+                QMessageBox.warning(self, "Consistency Error", 
+                    "When exporting all pages, mappings must be consistently formatted (either all use 'Amount', or all use 'Deposit'/'Withdrawal').")
+                return
 
         file_name, _ = QFileDialog.getSaveFileName(self, "Save CSV", "", "CSV Files (*.csv)")
         if not file_name:
