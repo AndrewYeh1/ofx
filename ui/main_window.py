@@ -135,23 +135,30 @@ class MainWindow(QMainWindow):
         self.processing_page = 0
     
     def worker_completed(self, result):
-        if self.processing_page == self.page_num.value() - 1:
-            self.canvas.draw_largest_bounding_box(result)
-            self.update_bbox_buttons()
+        page = self.pages[self.processing_page]
         
-        # Save only the largest bounding box so returning to the page doesn't draw all of them
-        largest_box = self.canvas._find_largest_box([box['coordinate'] for box in result])
-        if largest_box:
-            self.pages[self.processing_page].bounding_boxes = [{'coordinate': largest_box}]
-        else:
-            self.pages[self.processing_page].bounding_boxes = []
+        # If the user already manually added/removed/moved a bounding box on this page,
+        # respect their action and skip the auto-detected result entirely.
+        if not page.user_modified_bbox:
+            if self.processing_page == self.page_num.value() - 1:
+                self.canvas.draw_largest_bounding_box(result)
+                self.update_bbox_buttons()
             
-        self.pages[self.processing_page].processing_status = "Completed"
+            # Save only the largest bounding box so returning to the page doesn't draw all of them
+            largest_box = self.canvas._find_largest_box([box['coordinate'] for box in result])
+            if largest_box:
+                page.bounding_boxes = [{'coordinate': largest_box}]
+            else:
+                page.bounding_boxes = []
 
-        self.extract_data(self.processing_page)
+            page.processing_status = "Completed"
+            self.extract_data(self.processing_page)
 
-        if self.processing_page == self.page_num.value() - 1:
-            self.display_data(self.processing_page)
+            if self.processing_page == self.page_num.value() - 1:
+                self.display_data(self.processing_page)
+        else:
+            # Still mark as completed so the page isn't stuck in "Pending"
+            page.processing_status = "Completed"
     
         if self.processing_page < self.page_num.maximum() - 1:
             self.processing_page += 1
@@ -197,6 +204,7 @@ class MainWindow(QMainWindow):
     def add_bounding_box(self):
         if not self.pages or self.page_num.value() == 0:
             return
+        self.pages[self.current_page_index].user_modified_bbox = True
         pixmap = self.pages[self.current_page_index].pixmap
         w, h = pixmap.width(), pixmap.height()
         default_box = [{'coordinate': [w * 0.1, h * 0.1, w * 0.9, h * 0.9]}]
@@ -208,6 +216,7 @@ class MainWindow(QMainWindow):
     def remove_bounding_box(self):
         if not self.pages or self.page_num.value() == 0:
             return
+        self.pages[self.current_page_index].user_modified_bbox = True
         self.canvas.clear_bounding_boxes()
         self.pages[self.current_page_index].bounding_boxes = []
         self.update_bbox_buttons()
@@ -216,7 +225,8 @@ class MainWindow(QMainWindow):
     def on_box_updated(self):
         if not self.pages or self.page_num.value() == 0:
             return
-            
+        
+        self.pages[self.current_page_index].user_modified_bbox = True
         boxes = self.canvas.get_bounding_boxes()
         self.pages[self.current_page_index].bounding_boxes = [{'coordinate': box} for box in boxes]
         

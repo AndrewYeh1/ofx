@@ -11,3 +11,5 @@ class PageData:
         self.processing_status = processing_status
         self.column_mappings = None
         self.disabled_rows = None
+        self.user_modified_bbox = False  # True if the user manually added/removed/moved a bounding box
+
