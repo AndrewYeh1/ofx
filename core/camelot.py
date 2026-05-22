@@ -43,11 +43,18 @@ class DataDetectionWorker(QThread):
             self.bbox.append(f"{px1},{py1},{px2},{py2}")
 
     def run(self):
+        self.df = None
+        
+        # If bbox is an explicit empty list (user removed all boxes), skip extraction
+        if self.bbox is not None and len(self.bbox) == 0:
+            self.result_ready.emit(False)
+            return
+
         tables = camelot.read_pdf(
             self.path,
             pages=str(self.page_num),
             flavor="stream",
-            table_areas=self.bbox
+            table_areas=self.bbox if self.bbox else None
         )
 
         if tables.n > 0:

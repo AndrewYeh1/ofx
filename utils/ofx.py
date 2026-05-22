@@ -68,7 +68,7 @@ def determine_mapping_type(mappings: dict) -> str:
         return "amount"
     return "deposit_withdrawal"
 
-def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page_num: int) -> tuple[pd.DataFrame, list]:
+def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page_num: int, default_year: int) -> tuple[pd.DataFrame, list]:
     """
     Filters disabled rows and unmapped columns.
     Returns a clean DataFrame with ['Date', 'Amount', 'Payee'] and a list of error dictionaries.
@@ -89,6 +89,20 @@ def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page
     
     # Handle dates
     dates = pd.to_datetime(clean_df[date_col], errors='coerce')
+    
+    def fix_year(dt):
+        if pd.isna(dt):
+            return dt
+        if dt.year == 1 or dt.year == 1900:
+            try:
+                return dt.replace(year=default_year)
+            except ValueError:
+                # Handle leap year edge cases (e.g. Feb 29 on year 1 replacing into a non-leap year)
+                return dt.replace(year=default_year, day=28)
+        return dt
+        
+    dates = dates.apply(fix_year)
+    
     for original_idx, val in dates.items():
         if pd.isna(val):
             # Log as error if date couldn't be parsed

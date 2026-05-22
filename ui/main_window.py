@@ -95,9 +95,31 @@ class MainWindow(QMainWindow):
         self.left_right_layout.addStretch()
         self.canvas_container_layout.addLayout(self.left_right_layout)
 
-        # Data Table
+        # Data Table Container
+        self.table_container = QWidget()
+        self.table_layout = QVBoxLayout(self.table_container)
+        self.table_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.table_view = DropdownHeaderTableView()
-        self.splitter.addWidget(self.table_view)
+        self.table_layout.addWidget(self.table_view)
+        
+        # Bottom Right Toolbar
+        self.table_toolbar = QHBoxLayout()
+        self.table_toolbar.addStretch()  # Push everything to the right
+        self.table_toolbar.addWidget(QLabel("Default Year:"))
+        import datetime
+        self.year_spinbox = QSpinBox()
+        self.year_spinbox.setRange(1900, 2100)
+        self.year_spinbox.setValue(datetime.datetime.now().year)
+        self.table_toolbar.addWidget(self.year_spinbox)
+        
+        self.btn_fill_dates = QPushButton("Fill Missing Dates")
+        self.btn_fill_dates.clicked.connect(self.fill_missing_dates)
+        self.table_toolbar.addWidget(self.btn_fill_dates)
+        
+        self.table_layout.addLayout(self.table_toolbar)
+
+        self.splitter.addWidget(self.table_container)
         self.splitter.setSizes([700, 300])
 
         # State
@@ -158,6 +180,8 @@ class MainWindow(QMainWindow):
         
         if self.pages[target_page].processing_status == "Completed":
             self.display_data(target_page)
+        else:
+            self.table_view.setModel(PandasModel(pd.DataFrame()))
 
     def update_bbox_buttons(self):
         if not self.pages or self.page_num.value() == 0:
@@ -207,8 +231,17 @@ class MainWindow(QMainWindow):
             return
             
         self.current_image_path = file_name
+        
+        # Abort any ongoing background table detection from the previous document
+        if hasattr(self, 'table_detection_worker'):
+            self.table_detection_worker.cancel()
+            
         self.pages.clear()
         self.processing_page = 0
+        if hasattr(self, 'current_page_index'):
+            del self.current_page_index
+            
+        self.table_view.setModel(PandasModel(pd.DataFrame()))
         
         # Block signals temporarily to prevent automatic/conditional triggering of scroll_to_page
         self.page_num.blockSignals(True)
@@ -266,6 +299,7 @@ class MainWindow(QMainWindow):
     def display_data(self, page_num: int):
         page_data = self.pages[page_num]
         if page_data.df is None:
+            self.table_view.setModel(PandasModel(pd.DataFrame()))
             return
             
         self.table_view.setModel(PandasModel(page_data.df))
@@ -335,12 +369,13 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            user_year = self.year_spinbox.value()
             # Process Data
             dataframes = []
             all_errors = []
             for page in pages_to_export:
                 page_display_num = page.page_num + 1 if hasattr(page, 'page_num') else 'Unknown'
-                df_clean, errors = prepare_page_data(page.df, page.column_mappings, page.disabled_rows or set(), page_display_num)
+                df_clean, errors = prepare_page_data(page.df, page.column_mappings, page.disabled_rows or set(), page_display_num, user_year)
                 dataframes.append(df_clean)
                 all_errors.extend(errors)
                 
@@ -364,4 +399,33 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save OFX: {str(e)}")
+
+    def fill_missing_dates(self):
+        if not self.pages or self.page_num.value() == 0:
+            return
+            
+        if not hasattr(self, 'current_page_index') or self.current_page_index >= len(self.pages):
+            return
+            
+        page = self.pages[self.current_page_index]
+        if page.df is None or page.df.empty:
+            return
+            
+        # Get column mappings to find the 'Date' column
+        mappings = self.table_view.get_mappings()
+        inv_map = {v: k for k, v in mappings.items() if v != "Unmapped"}
+        
+        if "Date" not in inv_map:
+            QMessageBox.warning(self, "Warning", "Please map a column to 'Date' first.")
+            return
+            
+        date_col = inv_map["Date"]
+        
+        import numpy as np
+        # Convert empty strings or whitespace-only to NaN temporarily to use ffill
+        page.df[date_col] = page.df[date_col].replace(r'^\s*$', np.nan, regex=True)
+        page.df[date_col] = page.df[date_col].ffill()
+        
+        # Update the UI
+        self.display_data(self.current_page_index)
 

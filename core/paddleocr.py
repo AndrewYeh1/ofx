@@ -58,12 +58,48 @@ class TableDetectionWorker(QObject):
         self._timer.timeout.connect(self._check_result)
         
         # Start persistent worker process
+        self._start_process()
+
+    def _start_process(self):
         self._process = Process(
             target=_worker_loop,
             args=(self._task_queue, self._result_queue),
             daemon=True,
         )
         self._process.start()
+        
+    def cancel(self):
+        """Safely terminate the current processing and restart the worker."""
+        self._timer.stop()
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join()
+            
+        # Do NOT try to drain the queues here; terminating a process while it holds the queue lock 
+        # causes empty() and get() to deadlock the entire UI thread. 
+        # Instead, we safely close and discard the old queues.
+        try:
+            self._task_queue.close()
+            self._task_queue.cancel_join_thread()
+            self._result_queue.close()
+            self._result_queue.cancel_join_thread()
+        except:
+            pass
+            
+        # Recreate fresh queues to guarantee no deadlocks
+        self._task_queue = Queue()
+        self._result_queue = Queue()
+            
+        # Cleanup any lingering shared memory handle in the main process
+        if hasattr(self, '_current_shm') and self._current_shm is not None:
+            try:
+                self._current_shm.close()
+                self._current_shm.unlink()
+            except:
+                pass
+            self._current_shm = None
+            
+        self._start_process()
 
     def import_pixmap(self, pixmap: QPixmap):
         """Just store the pixmap reference — keep this fast."""
@@ -85,13 +121,15 @@ class TableDetectionWorker(QObject):
         arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
         arr = np.ascontiguousarray(arr)
         
-        # Send via shared memory (zero-copy, no pickling the big array)
+        # Send via shared memory
         shm = SharedMemory(create=True, size=arr.nbytes)
         shared_arr = np.ndarray(arr.shape, dtype=arr.dtype, buffer=shm.buf)
         shared_arr[:] = arr
         
+        # Keep reference alive so Windows doesn't destroy the handle before worker opens it
+        self._current_shm = shm
+        
         self._task_queue.put((shm.name, arr.shape, arr.dtype.str))
-        shm.close()  # Close local handle; worker will unlink after reading
         
         self._timer.start()
 
@@ -99,6 +137,13 @@ class TableDetectionWorker(QObject):
         """Polled from main thread — emits signal when worker process is done."""
         if not self._result_queue.empty():
             self._timer.stop()
+            
+            # Safe to close local handle now that worker has definitely processed it
+            if hasattr(self, '_current_shm') and self._current_shm is not None:
+                try: self._current_shm.close()
+                except: pass
+                self._current_shm = None
+                
             self.result_ready.emit(self._result_queue.get())
     
     def shutdown(self):
