@@ -333,21 +333,15 @@ QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
 }
 
 QSpinBox::up-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid #eee;
-    width: 0;
-    height: 0;
+    image: url(resources/arrow_up.svg);
+    width: 12px;
+    height: 12px;
 }
 
 QSpinBox::down-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #eee;
-    width: 0;
-    height: 0;
+    image: url(resources/arrow_down.svg);
+    width: 12px;
+    height: 12px;
 }
 
 QSpinBox:disabled {
