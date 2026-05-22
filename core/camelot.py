@@ -54,7 +54,8 @@ class DataDetectionWorker(QThread):
             self.path,
             pages=str(self.page_num),
             flavor="stream",
-            table_areas=self.bbox if self.bbox else None
+            table_areas=self.bbox if self.bbox else None,
+            row_tol=10
         )
 
         if tables.n > 0:

@@ -38,13 +38,13 @@ def validate_mappings(mappings: dict) -> str:
     mapped_fields = list(mappings.values())
     
     has_date = "Date" in mapped_fields
-    has_payee = "Payee" in mapped_fields
+    has_desc = "Description" in mapped_fields
     has_amount = "Amount" in mapped_fields
     has_deposit = "Deposit" in mapped_fields
     has_withdrawal = "Withdrawal" in mapped_fields
     
-    if not has_date or not has_payee:
-        return "Must map at least 'Date' and 'Payee'."
+    if not has_date or not has_desc:
+        return "Must map at least 'Date' and 'Description'."
         
     if has_amount and (has_deposit or has_withdrawal):
         return "Cannot map 'Amount' alongside 'Deposit' or 'Withdrawal'."
@@ -71,7 +71,7 @@ def determine_mapping_type(mappings: dict) -> str:
 def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page_num: int, default_year: int) -> tuple[pd.DataFrame, list]:
     """
     Filters disabled rows and unmapped columns.
-    Returns a clean DataFrame with ['Date', 'Amount', 'Payee'] and a list of error dictionaries.
+    Returns a clean DataFrame with ['Date', 'Amount', 'Description'] and a list of error dictionaries.
     """
     errors = []
     
@@ -83,12 +83,12 @@ def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page
     inv_map = {v: k for k, v in mappings.items() if v != "Unmapped"}
     
     date_col = inv_map.get("Date")
-    payee_col = inv_map.get("Payee")
+    desc_col = inv_map.get("Description")
     
     result = pd.DataFrame()
     
-    # Handle dates
-    dates = pd.to_datetime(clean_df[date_col], errors='coerce')
+    # Handle dates using mixed format so a single weird date doesn't ruin format inference for the rest
+    dates = pd.to_datetime(clean_df[date_col], errors='coerce', format='mixed')
     
     def fix_year(dt):
         if pd.isna(dt):
@@ -109,7 +109,7 @@ def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page
             errors.append({'page': page_num, 'row': original_idx, 'col': date_col})
             
     result['Date'] = dates
-    result['Payee'] = clean_df[payee_col].astype(str)
+    result['Description'] = clean_df[desc_col].astype(str)
     
     # Helper to clean currency and track errors
     def apply_currency(col_idx):
@@ -167,7 +167,7 @@ def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page
 def export_to_ofx(df: pd.DataFrame, file_path: str):
     """
     Generates OFX content and writes to file_path.
-    df must have ['Date', 'Amount', 'Payee']
+    df must have ['Date', 'Amount', 'Description']
     """
     ofx_header = (
         "OFXHEADER:100\n"
@@ -203,7 +203,7 @@ def export_to_ofx(df: pd.DataFrame, file_path: str):
         # Format Date as YYYYMMDDHHMMSS
         date_val = row['Date'].strftime('%Y%m%d000000')
         amount_val = f"{row['Amount']:.2f}"
-        payee_val = str(row['Payee']).strip()
+        desc_val = str(row['Description']).strip()
 
         trn_type = "CREDIT" if row['Amount'] >= 0 else "DEBIT"
 
@@ -213,7 +213,7 @@ def export_to_ofx(df: pd.DataFrame, file_path: str):
             f"            <DTPOSTED>{date_val}</DTPOSTED>\n"
             f"            <TRNAMT>{amount_val}</TRNAMT>\n"
             f"            <FITID>{idx}</FITID>\n"
-            f"            <NAME>{payee_val}</NAME>\n"
+            f"            <NAME>{desc_val}</NAME>\n"
             "          </STMTTRN>\n"
         )
         transactions.append(txn)

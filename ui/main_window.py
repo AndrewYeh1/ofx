@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.btn_export_ofx)
         
         self.cb_export_all = QCheckBox("Export All Pages")
+        self.cb_export_all.setChecked(True)
         self.toolbar.addWidget(self.cb_export_all)
 
         self.layout.addLayout(self.toolbar)
@@ -312,14 +313,68 @@ class MainWindow(QMainWindow):
             self.table_view.set_disabled_rows(page_data.disabled_rows)
 
     def export_csv(self):
-        if self.df is None:
-            QMessageBox.warning(self, "Error", "No data to export.")
+        if not self.pages:
+            QMessageBox.warning(self, "Error", "No documents loaded.")
             return
-            
+
+        export_all = self.cb_export_all.isChecked()
+        pages_to_export = []
+        
+        if export_all:
+            pages_to_export = [p for p in self.pages if p.df is not None]
+            if not pages_to_export:
+                QMessageBox.warning(self, "Error", "No extracted data available to export.")
+                return
+        else:
+            current_page = self.pages[self.current_page_index]
+            if current_page.df is None:
+                QMessageBox.warning(self, "Error", "Current page has no extracted data.")
+                return
+            pages_to_export = [current_page]
+
+        # Sync the current active table view state to its PageData object
+        if hasattr(self, 'current_page_index') and self.current_page_index < len(self.pages):
+            self.pages[self.current_page_index].column_mappings = self.table_view.get_mappings().copy()
+            self.pages[self.current_page_index].disabled_rows = self.table_view.get_disabled_rows().copy()
+
+        # Validation for consistency
+        from utils.ofx import validate_mappings, prepare_page_data
+        try:
+            first_mapping_type = None
+            for i, page in enumerate(pages_to_export):
+                page_display_num = page.page_num + 1 if hasattr(page, 'page_num') else 'Unknown'
+                mapping_type = validate_mappings(page.column_mappings, page_display_num)
+                if first_mapping_type is None:
+                    first_mapping_type = mapping_type
+                elif mapping_type != first_mapping_type:
+                    raise ValueError("Inconsistent mappings across pages. All exported pages must either use (Amount) OR (Deposit & Withdrawal).")
+        except ValueError as e:
+            QMessageBox.warning(self, "Validation Error", str(e))
+            return
+
         file_name, _ = QFileDialog.getSaveFileName(self, "Save CSV", "", "CSV Files (*.csv)")
-        if file_name:
-            self.df.to_csv(file_name, index=False, header=False)
+        if not file_name:
+            return
+
+        try:
+            user_year = self.year_spinbox.value()
+            # Process Data
+            dataframes = []
+            for page in pages_to_export:
+                page_display_num = page.page_num + 1 if hasattr(page, 'page_num') else 'Unknown'
+                df_clean, errors = prepare_page_data(page.df, page.column_mappings, page.disabled_rows or set(), page_display_num, user_year)
+                dataframes.append(df_clean)
+                
+            final_df = pd.concat(dataframes, ignore_index=True)
+            if final_df.empty:
+                QMessageBox.warning(self, "Error", "No valid data to export after filtering.")
+                return
+
+            final_df.to_csv(file_name, index=False)
             QMessageBox.information(self, "Success", f"Saved to {file_name}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save CSV: {str(e)}")
 
     def export_ofx(self):
         if not self.pages:

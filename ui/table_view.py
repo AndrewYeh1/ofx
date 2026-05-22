@@ -39,9 +39,9 @@ class DropdownHeaderTableView(QTableView):
         if model and model.columnCount() > 0:
             self.horizontalHeader().setMinimumHeight(40)
             self.verticalHeader().setMinimumWidth(36)
-            self.setup_header_dropdowns(model.columnCount())
             self.setup_row_checkboxes(model.rowCount())
             self.auto_disable_header_footer_rows(model)
+            self.setup_header_dropdowns(model.columnCount(), model)
         else:
             self.horizontalHeader().setMinimumHeight(0)
             self.verticalHeader().setMinimumWidth(0)
@@ -78,10 +78,36 @@ class DropdownHeaderTableView(QTableView):
         self.row_checkboxes.clear()
         self.disabled_rows.clear()
 
-    def setup_header_dropdowns(self, num_columns):
+    def setup_header_dropdowns(self, num_columns, model=None):
         self.clear_header_dropdowns()
 
-        fields = ["Unmapped", "Date", "Payee", "Amount", "Deposit", "Withdrawal"]
+        fields = ["Unmapped", "Date", "Description", "Amount", "Deposit", "Withdrawal"]
+
+        # Gather text from disabled rows (likely headers) to intelligently guess columns
+        col_headers = {}
+        if model:
+            for col in range(num_columns):
+                words = []
+                for row in self.disabled_rows:
+                    val = model.data(model.index(row, col))
+                    if val:
+                        words.append(str(val).lower())
+                col_headers[col] = " ".join(words)
+
+        def guess_mapping(header_text):
+            if not header_text:
+                return 0
+            if any(w in header_text for w in ['date', 'time', 'posted']):
+                return 1  # Date
+            if any(w in header_text for w in ['description', 'payee', 'transaction', 'detail', 'type']):
+                return 2  # Description
+            if any(w in header_text for w in ['amount', 'balance', 'total']):
+                return 3  # Amount
+            if any(w in header_text for w in ['withdraw', 'debit', 'deduct', 'out']):
+                return 5  # Withdrawal
+            if any(w in header_text for w in ['deposit', 'credit', 'addition', 'in']):
+                return 4  # Deposit
+            return 0  # Unmapped
 
         header = self.horizontalHeader()
         for col in range(num_columns):
@@ -90,18 +116,24 @@ class DropdownHeaderTableView(QTableView):
             combo.setObjectName("headerDropdown")
             combo.addItems(fields)
             
-            # Smart default mappings: Column 0 -> Date, Column 1 -> Payee, Column 2 -> Amount
-            if col == 0 and num_columns >= 3:
-                combo.setCurrentIndex(1)  # Date
-            elif col == 1 and num_columns >= 3:
-                combo.setCurrentIndex(2)  # Payee
-            elif col == 2 and num_columns >= 3:
-                combo.setCurrentIndex(3)  # Amount
-            else:
-                combo.setCurrentIndex(0)  # Unmapped
+            # Smart default mappings
+            guessed_idx = guess_mapping(col_headers.get(col, ""))
+            combo.setCurrentIndex(guessed_idx)
+            
+            def update_combo_style(cb=combo):
+                if cb.currentIndex() == 0:
+                    cb.setStyleSheet("QComboBox { background-color: #5a3030; color: white; border: 1px solid #7a4040; }")
+                else:
+                    cb.setStyleSheet("")
+            
+            update_combo_style()
 
             # Monitor change events
-            combo.currentIndexChanged.connect(lambda idx, c=col: self.on_mapping_changed(c, idx))
+            def on_change(idx, c=col, cb=combo):
+                update_combo_style(cb)
+                self.on_mapping_changed(c, idx)
+                
+            combo.currentIndexChanged.connect(on_change)
             
             self.header_dropdowns.append(combo)
             combo.show()
@@ -183,7 +215,7 @@ class DropdownHeaderTableView(QTableView):
                 chk.hide()
 
     def get_mappings(self):
-        """Returns a dict mapping col_index -> field name (e.g. {0: 'Date', 1: 'Payee', 2: 'Amount'})"""
+        """Returns a dict mapping col_index -> field name (e.g. {0: 'Date', 1: 'Description', 2: 'Amount'})"""
         return self.column_mappings
 
     def set_mappings(self, mappings: dict):
