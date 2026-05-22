@@ -1,1 +1,6 @@
 /.venv
+/models
+*.ofx
+__pycache__/
+/dist
+/build

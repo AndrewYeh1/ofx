@@ -1,4 +1,16 @@
 import os
+import sys
+
+# Crucial settings for PyInstaller & PaddleOCR / PaddleX
+if hasattr(sys, '_MEIPASS'):
+    # Avoid duplicate OpenMP library loading crashes
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    
+    # If we bundled pre-downloaded models inside the app (fully offline mode), use them
+    bundled_models_dir = os.path.join(sys._MEIPASS, "models")
+    if os.path.isdir(os.path.join(bundled_models_dir, ".paddlex")):
+        os.environ["PADDLEX_HOME"] = bundled_models_dir
+
 # Workarounds for PaddleOCR 3.5 on Windows
 os.environ["FLAGS_use_mkldnn"] = "0"
 os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"

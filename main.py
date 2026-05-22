@@ -1,9 +1,13 @@
 import sys
 import os
+import multiprocessing
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
 if __name__ == "__main__":
+    # Enable multiprocessing support for frozen PyInstaller executable
+    multiprocessing.freeze_support()
+    
     app = QApplication(sys.argv)
     
     # Load dark theme
