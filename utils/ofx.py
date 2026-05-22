@@ -109,7 +109,7 @@ def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page
             errors.append({'page': page_num, 'row': original_idx, 'col': date_col})
             
     result['Date'] = dates
-    result['Description'] = clean_df[desc_col].astype(str)
+    result['Description'] = clean_df[desc_col].astype(str).apply(lambda x: re.sub(r'\s+', ' ', x).strip())
     
     # Helper to clean currency and track errors
     def apply_currency(col_idx):
@@ -168,63 +168,93 @@ def export_to_ofx(df: pd.DataFrame, file_path: str):
     """
     Generates OFX content and writes to file_path.
     df must have ['Date', 'Amount', 'Description']
+    Format matches Servus Credit Union OFX output for Sage 50 Canada compatibility.
     """
-    ofx_header = (
-        "OFXHEADER:100\n"
-        "DATA:OFXSGML\n"
-        "VERSION:102\n"
-        "SECURITY:NONE\n"
-        "ENCODING:USASCII\n"
-        "CHARSET:1252\n"
-        "COMPRESSION:NONE\n"
-        "OLDFILEUID:NONE\n"
-        "NEWFILEUID:NONE\n\n"
-    )
+    import hashlib
+    import time
 
-    ofx_body = (
-        "<OFX>\n"
-        "  <BANKMSGSRSV1>\n"
-        "    <STMTTRNRS>\n"
-        "      <TRNUID>1</TRNUID>\n"
-        "      <STATUS><CODE>0</CODE><SEVERITY>INFO</SEVERITY></STATUS>\n"
-        "      <STMTRS>\n"
-        "        <CURDEF>USD</CURDEF>\n"
-        "        <BANKACCTFROM>\n"
-        "          <BANKID>123456789</BANKID>\n"
-        "          <ACCTID>123456789</ACCTID>\n"
-        "          <ACCTTYPE>CHECKING</ACCTTYPE>\n"
-        "        </BANKACCTFROM>\n"
-        "        <BANKTRANLIST>\n"
-    )
+    now_str = pd.Timestamp.now().strftime('%Y%m%d%H%M%S') + '[-6:CST]'
 
-    transactions = []
-    # Use enumerate to guarantee a unique FITID
+    if df.empty:
+        dtstart = '19700101000000[-6:CST]'
+        dtend = '19700101000000[-6:CST]'
+    else:
+        dtstart = df['Date'].min().strftime('%Y%m%d') + '000000[-6:CST]'
+        dtend = df['Date'].max().strftime('%Y%m%d') + '000000[-6:CST]'
+
+    export_salt = str(time.time())
+
+    lines = []
+    # Header
+    lines.append('OFXHEADER:100')
+    lines.append('DATA:OFXSGML')
+    lines.append('VERSION:102')
+    lines.append('SECURITY:TYPE1')
+    lines.append('ENCODING:USASCII')
+    lines.append('CHARSET:1252')
+    lines.append('COMPRESSION:NONE')
+    lines.append('OLDFILEUID:NONE')
+    lines.append('NEWFILEUID:NONE')
+    lines.append('')
+    # Body
+    lines.append('<OFX>')
+    lines.append(' <SIGNONMSGSRSV1>')
+    lines.append('  <SONRS>')
+    lines.append('   <STATUS>')
+    lines.append('    <CODE>0')
+    lines.append('    <SEVERITY>INFO')
+    lines.append('    <MESSAGE>OK')
+    lines.append('   </STATUS>')
+    lines.append(f'   <DTSERVER>{now_str}')
+    lines.append('   <LANGUAGE>ENG')
+    lines.append('  </SONRS>')
+    lines.append(' </SIGNONMSGSRSV1>')
+    lines.append(' <BANKMSGSRSV1>')
+    lines.append('  <STMTTRNRS>')
+    lines.append('   <TRNUID>0000000000001')
+    lines.append('   <STATUS>')
+    lines.append('    <CODE>0')
+    lines.append('    <SEVERITY>INFO')
+    lines.append('    <MESSAGE>OK')
+    lines.append('   </STATUS>')
+    lines.append('   <STMTRS>')
+    lines.append('    <CURDEF>CAD')
+    lines.append('    <BANKACCTFROM>')
+    lines.append('     <BANKID>0')
+    lines.append('     <BRANCHID>000')
+    lines.append('     <ACCTID>0')
+    lines.append('     <ACCTTYPE>CHECKING')
+    lines.append('    </BANKACCTFROM>')
+    lines.append('    <BANKTRANLIST>')
+    lines.append(f'     <DTSTART>{dtstart}')
+    lines.append(f'     <DTEND>{dtend}')
+
+    # Transactions
     for idx, (_, row) in enumerate(df.iterrows()):
-        # Format Date as YYYYMMDDHHMMSS
-        date_val = row['Date'].strftime('%Y%m%d000000')
+        date_val = row['Date'].strftime('%Y%m%d') + '000000[-6:CST]'
         amount_val = f"{row['Amount']:.2f}"
-        desc_val = str(row['Description']).strip()
+        desc_val = re.sub(r'\s+', ' ', str(row['Description'])).strip()
 
         trn_type = "CREDIT" if row['Amount'] >= 0 else "DEBIT"
 
-        txn = (
-            "          <STMTTRN>\n"
-            f"            <TRNTYPE>{trn_type}</TRNTYPE>\n"
-            f"            <DTPOSTED>{date_val}</DTPOSTED>\n"
-            f"            <TRNAMT>{amount_val}</TRNAMT>\n"
-            f"            <FITID>{idx}</FITID>\n"
-            f"            <NAME>{desc_val}</NAME>\n"
-            "          </STMTTRN>\n"
-        )
-        transactions.append(txn)
+        raw_id = f"{date_val}{amount_val}{desc_val}{idx}{export_salt}"
+        fitid = hashlib.md5(raw_id.encode('utf-8')).hexdigest()[:12]
 
-    ofx_footer = (
-        "        </BANKTRANLIST>\n"
-        "      </STMTRS>\n"
-        "    </STMTTRNRS>\n"
-        "  </BANKMSGSRSV1>\n"
-        "</OFX>\n"
-    )
+        lines.append('     <STMTTRN>')
+        lines.append(f'      <TRNTYPE>{trn_type}')
+        lines.append(f'      <DTPOSTED>{date_val}')
+        lines.append(f'      <TRNAMT>{amount_val}')
+        lines.append(f'      <FITID>{fitid}')
+        lines.append(f'      <NAME>{desc_val}')
+        lines.append('     </STMTTRN>')
 
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(ofx_header + ofx_body + "".join(transactions) + ofx_footer)
+    # Footer
+    lines.append('    </BANKTRANLIST>')
+    lines.append('   </STMTRS>')
+    lines.append('  </STMTTRNRS>')
+    lines.append(' </BANKMSGSRSV1>')
+    lines.append('</OFX>')
+    lines.append('')
+
+    with open(file_path, 'w', encoding='ascii', errors='replace', newline='\r\n') as f:
+        f.write('\n'.join(lines))
