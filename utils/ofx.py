@@ -49,14 +49,8 @@ def validate_mappings(mappings: dict) -> str:
     if has_amount and (has_deposit or has_withdrawal):
         return "Cannot map 'Amount' alongside 'Deposit' or 'Withdrawal'."
         
-    if has_deposit and not has_withdrawal:
-        return "Mapped 'Deposit' but missing 'Withdrawal'."
-        
-    if has_withdrawal and not has_deposit:
-        return "Mapped 'Withdrawal' but missing 'Deposit'."
-        
-    if not has_amount and not (has_deposit and has_withdrawal):
-        return "Must map either 'Amount', or both 'Deposit' and 'Withdrawal'."
+    if not has_amount and not has_deposit and not has_withdrawal:
+        return "Must map either 'Amount', or at least one of 'Deposit' / 'Withdrawal'."
         
     return None
 
@@ -66,7 +60,10 @@ def determine_mapping_type(mappings: dict) -> str:
         return None
     if "Amount" in mappings.values():
         return "amount"
-    return "deposit_withdrawal"
+    mapped_fields = list(mappings.values())
+    if "Deposit" in mapped_fields or "Withdrawal" in mapped_fields:
+        return "deposit_withdrawal"
+    return None
 
 def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page_num: int, default_year: int) -> tuple[pd.DataFrame, list]:
     """
@@ -150,11 +147,11 @@ def prepare_page_data(df: pd.DataFrame, mappings: dict, disabled_rows: set, page
         amt_col = inv_map["Amount"]
         result['Amount'] = apply_currency(amt_col)
     else:
-        dep_col = inv_map["Deposit"]
-        wit_col = inv_map["Withdrawal"]
+        dep_col = inv_map.get("Deposit")
+        wit_col = inv_map.get("Withdrawal")
         
-        deposits = apply_currency(dep_col)
-        withdrawals = apply_currency(wit_col)
+        deposits = apply_currency(dep_col) if dep_col is not None else pd.Series(0.0, index=clean_df.index)
+        withdrawals = apply_currency(wit_col) if wit_col is not None else pd.Series(0.0, index=clean_df.index)
         
         withdrawals = -withdrawals.abs()
         result['Amount'] = deposits + withdrawals
