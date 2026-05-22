@@ -8,8 +8,9 @@ if hasattr(sys, '_MEIPASS'):
     
     # If we bundled pre-downloaded models inside the app (fully offline mode), use them
     bundled_models_dir = os.path.join(sys._MEIPASS, "models")
-    if os.path.isdir(os.path.join(bundled_models_dir, ".paddlex")):
-        os.environ["PADDLEX_HOME"] = bundled_models_dir
+    paddlex_dir = os.path.join(bundled_models_dir, ".paddlex")
+    if os.path.isdir(paddlex_dir):
+        os.environ["PADDLEX_HOME"] = paddlex_dir
 
 # Workarounds for PaddleOCR 3.5 on Windows
 os.environ["FLAGS_use_mkldnn"] = "0"
@@ -29,6 +30,13 @@ from PyQt6.QtGui import QPixmap, QImage
 
 def _worker_loop(task_queue: Queue, result_queue: Queue):
     """Persistent worker process — initializes engine once, processes jobs forever."""
+    # Ensure stdout/stderr exist in this spawned process to avoid crashes when PaddleX tries to print
+    import sys, os
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
+        
     engine = LayoutDetection(enable_mkldnn=False)
     
     while True:
